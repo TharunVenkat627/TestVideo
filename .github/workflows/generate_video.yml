@@ -1,0 +1,51 @@
+name: Auto-Create & Upload Stickman Video
+
+on:
+  workflow_dispatch: # Click "Run workflow" anytime
+  # schedule:
+  #   - cron: '0 12 * * *' # Uncomment to run daily at 5:30 PM IST
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Chromium system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libasound2t64 fonts-noto-color-emoji
+
+      - name: Install Python & Node dependencies
+        run: |
+          pip install -r requirements.txt
+          npm install
+
+      - name: Generate original script & TTS voiceover
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python scripts/generate_episode.py
+
+      - name: Render Remotion video
+        run: |
+          npx remotion render src/index.ts MainVideo out/final.mp4 \
+            --image-format=jpeg \
+            --jpeg-quality=80 \
+            --codec=h264 \
+            --audio-codec=mp3 \
+            --concurrency=2
+
+      - name: Upload as Private video to YouTube
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python scripts/upload_youtube.py
