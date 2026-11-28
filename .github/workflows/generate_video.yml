@@ -1,4 +1,4 @@
-name: Life of an Object - Long Form Pipeline
+name: Life of an Object - Mute Video + Script
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ on:
 jobs:
   produce-episode:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -33,21 +33,20 @@ jobs:
           pip install -r requirements.txt
           npm install
 
-      - name: Generate 8-Chapter Script, Creator Pack & Voiceover
-        timeout-minutes: 8
+      - name: Generate Script, Frame Timings & Creator Pack
+        timeout-minutes: 5
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OBJECT_NAME: ${{ github.event.inputs.object_name }}
           PYTHONUNBUFFERED: "1"
         run: python -u scripts/generate_episode.py
 
-      - name: Render 10-12 Min Documentary Video
+      - name: Render Mute Animated Video
         run: |
           npx remotion render src/index.ts MainVideo out/final.mp4 \
             --image-format=jpeg \
             --jpeg-quality=80 \
             --codec=h264 \
-            --audio-codec=mp3 \
             --concurrency=2
 
       - name: Upload Private Video to YouTube
@@ -57,8 +56,8 @@ jobs:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: python scripts/upload_youtube.py
 
-      - name: Save Creator Pack (Prompts, Thumbnail, Hooks)
+      - name: Save Script & Sync Guide Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: youtube-creator-pack
+          name: voiceover-script-and-pack
           path: out/youtube_pack.md
