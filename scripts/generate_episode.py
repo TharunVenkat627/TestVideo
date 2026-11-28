@@ -8,6 +8,7 @@ import time
 from google import genai
 from google.genai import types
 import edge_tts
+from gtts import gTTS
 from mutagen.mp3 import MP3
 
 def log(msg: str):
