@@ -1,5 +1,6 @@
 google-genai
 edge-tts
+gTTS
 mutagen
 google-api-python-client
 google-auth-oauthlib
