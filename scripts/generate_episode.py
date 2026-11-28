@@ -103,10 +103,19 @@ def call_llm_json(client: genai.Client, models: list[str], prompt: str, step_lab
                 time.sleep(2)
     raise RuntimeError(f"All models failed on {step_label}. Last error: {last_err}")
 
+def sanitize_for_tts(text: str) -> str:
+    """Replace symbols and smart quotes that cause Edge-TTS SSML to return NoAudioReceived."""
+    text = text.replace("₹", " rupees ").replace("—", ", ").replace("–", ", ")
+    text = text.replace("“", '"').replace("”", '"').replace("’", "'").replace("‘", "'")
+    # Remove any non-standard symbols while keeping basic punctuation
+    text = re.sub(r"[^\w\s.,!?'\-\"]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
 async def synthesize_chunk(text: str, out_file: str, voice: str, label: str) -> float:
-    """Synthesize a single chapter chunk with 30s timeout and 3 retries."""
-    clean_text = re.sub(r"\s+", " ", text).strip()
-    for attempt in range(1, 4):
+    """Try Edge-TTS (en-IN-PrabhatNeural) twice with a 25s timeout; fall back to gTTS (co.in) on failure."""
+    clean_text = sanitize_for_tts(text)
+
+    for attempt in range(1, 3):
         try:
             t0 = time.time()
             communicate = edge_tts.Communicate(
@@ -115,14 +124,23 @@ async def synthesize_chunk(text: str, out_file: str, voice: str, label: str) -> 
                 rate="-4%",
                 pitch="-1Hz",
             )
-            await asyncio.wait_for(communicate.save(out_file), timeout=35)
-            dur = MP3(out_file).info.length
-            log(f"  <- [TTS {label}] {dur:.1f}s audio saved in {time.time() - t0:.1f}s")
-            return dur
+            await asyncio.wait_for(communicate.save(out_file), timeout=25)
+            if os.path.exists(out_file) and os.path.getsize(out_file) > 500:
+                dur = MP3(out_file).info.length
+                log(f"  <- [TTS {label}] Edge-TTS saved {dur:.1f}s in {time.time() - t0:.1f}s")
+                return dur
         except Exception as e:
-            log(f"  !! [TTS {label}] Attempt {attempt}/3 failed: {type(e).__name__} {e}")
-            await asyncio.sleep(2)
-    raise RuntimeError(f"Edge-TTS failed after 3 attempts on {label}")
+            log(f"  !! [TTS {label}] Edge-TTS attempt {attempt}/2 failed: {type(e).__name__}")
+            await asyncio.sleep(1.5)
+
+    # Automatic fallback to gTTS Indian English (tld='co.in') so the build never fails
+    log(f"  -> [TTS {label}] Falling back to gTTS (co.in)...")
+    t0 = time.time()
+    tts = gTTS(text=clean_text, lang="en", tld="co.in", slow=False)
+    tts.save(out_file)
+    dur = MP3(out_file).info.length
+    log(f"  <- [TTS {label}] gTTS fallback saved {dur:.1f}s in {time.time() - t0:.1f}s")
+    return dur
 
 def format_timestamp(seconds: float) -> str:
     mins = int(seconds // 60)
