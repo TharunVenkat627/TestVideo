@@ -52,8 +52,8 @@ def get_candidate_models(client: genai.Client) -> list[str]:
     log("Fetching available models from Gemini API...")
     preferred = [
         "gemini-3.6-flash",
-        "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
         "gemini-3.1-flash-lite",
         "gemini-2.5-flash-lite",
         "gemma-4-31b-it",
@@ -90,42 +90,38 @@ def call_llm_json(client: genai.Client, models: list[str], prompt: str, step_lab
             cleaned = re.sub(r"\s*```$", "", cleaned)
             parsed = json.loads(cleaned)
             log(f"  <- [{step_label}] Success with {model_name} in {time.time() - t0:.1f}s")
-            # Pin the working model to the front so subsequent chapters skip failed models
+            # Pin the working model to the front so subsequent chapters skip exhausted models
             if idx > 0:
                 models.remove(model_name)
                 models.insert(0, model_name)
             return parsed
         except Exception as e:
-            last_err = f"{model_name} ({type(e).__name__}): {str(e)[:180]}"
+            last_err = f"{model_name} ({type(e).__name__}): {str(e)[:160]}"
             log(f"  !! [{step_label}] Failed on {last_err}")
             if "429" in str(e):
                 time.sleep(2)
     raise RuntimeError(f"All models failed on {step_label}. Last error: {last_err}")
 
-def call_llm_json(client: genai.Client, models: list[str], prompt: str, step_label: str) -> dict:
-    last_err = None
-    for model_name in models:
+async def synthesize_chunk(text: str, out_file: str, voice: str, label: str) -> float:
+    """Synthesize a single chapter chunk with 30s timeout and 3 retries."""
+    clean_text = re.sub(r"\s+", " ", text).strip()
+    for attempt in range(1, 4):
         try:
-            log(f"  -> [{step_label}] Calling {model_name}...")
             t0 = time.time()
-            is_gemma = model_name.startswith("gemma")
-            cfg = types.GenerateContentConfig(
-                temperature=0.85,
-                **({} if is_gemma else {"response_mime_type": "application/json"}),
+            communicate = edge_tts.Communicate(
+                clean_text,
+                voice=voice,
+                rate="-4%",
+                pitch="-1Hz",
             )
-            res = client.models.generate_content(model=model_name, contents=prompt, config=cfg)
-            cleaned = re.sub(r"^```(?:json)?\s*", "", res.text.strip())
-            cleaned = re.sub(r"\s*```$", "", cleaned)
-            parsed = json.loads(cleaned)
-            log(f"  <- [{step_label}] Success with {model_name} in {time.time() - t0:.1f}s")
-            return parsed
+            await asyncio.wait_for(communicate.save(out_file), timeout=35)
+            dur = MP3(out_file).info.length
+            log(f"  <- [TTS {label}] {dur:.1f}s audio saved in {time.time() - t0:.1f}s")
+            return dur
         except Exception as e:
-            last_err = f"{model_name} ({type(e).__name__}): {str(e)[:180]}"
-            log(f"  !! [{step_label}] Failed on {last_err}")
-            if "429" in str(e):
-                log("  .. Rate limit hit, pausing 5s before trying next model...")
-                time.sleep(5)
-    raise RuntimeError(f"All models failed on {step_label}. Last error: {last_err}")
+            log(f"  !! [TTS {label}] Attempt {attempt}/3 failed: {type(e).__name__} {e}")
+            await asyncio.sleep(2)
+    raise RuntimeError(f"Edge-TTS failed after 3 attempts on {label}")
 
 def format_timestamp(seconds: float) -> str:
     mins = int(seconds // 60)
@@ -141,7 +137,6 @@ async def build_episode():
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is missing.")
 
-    # Disable hidden SDK exponential-backoff retries and cap each HTTP request at 45s
     client = genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(
@@ -182,11 +177,15 @@ Return ONLY valid JSON:
 """
     meta = call_llm_json(client, models, meta_prompt, "Story Bible")
 
-    # Step 2: Generate 8 Chapters sequentially
+    # Step 2: Generate 8 Chapters & Synthesize Chunked Indian English Audio per Chapter
+    tts_voice = os.environ.get("TTS_VOICE", "en-IN-PrabhatNeural").strip() or "en-IN-PrabhatNeural"
     all_scenes = []
     story_so_far = ""
+    chunk_files = []
+    chapter_timestamps = []
+    cursor_frame = 0
 
-    for ch_title, approx_time, ch_goal in CHAPTER_SPECS:
+    for ch_idx, (ch_title, approx_time, ch_goal) in enumerate(CHAPTER_SPECS):
         ch_prompt = f"""
 Continue the warm, emotional first-person story "Life of {chosen_object}" (First owner: {meta['firstOwnerName']}).
 {STORY_STYLE_RULES}
@@ -215,51 +214,54 @@ Return ONLY valid JSON:
 }}
 """
         ch_data = call_llm_json(client, models, ch_prompt, ch_title)
-        for s in ch_data.get("scenes", []):
+        ch_scenes = ch_data.get("scenes", [])
+        if not ch_scenes:
+            continue
+
+        ch_text = " ".join(s["narration"] for s in ch_scenes)
+        story_so_far += " " + ch_text
+
+        # Synthesize this chapter's audio immediately (prevents giant websocket hangs)
+        chunk_path = f"out/chunk_{ch_idx}.mp3"
+        ch_audio_sec = await synthesize_chunk(ch_text, chunk_path, tts_voice, ch_title)
+        chunk_files.append(chunk_path)
+
+        # Record exact chapter start timestamp for YouTube Chapters
+        chapter_timestamps.append((format_timestamp(cursor_frame / 30.0), ch_title))
+
+        # Distribute this chapter's exact audio frames proportionally across its scenes
+        ch_total_frames = max(90, int(round(ch_audio_sec * 30)))
+        ch_words = max(1, sum(len(s["narration"].split()) for s in ch_scenes))
+        allocated = 0
+
+        for s_idx, s in enumerate(ch_scenes):
             s["chapter"] = ch_title
+            if s_idx == len(ch_scenes) - 1:
+                dur_frames = max(60, ch_total_frames - allocated)
+            else:
+                w = max(1, len(s["narration"].split()))
+                dur_frames = max(60, int((w / ch_words) * ch_total_frames))
+                allocated += dur_frames
+
+            s["startFrame"] = cursor_frame
+            s["durationInFrames"] = dur_frames
+            cursor_frame += dur_frames
+            s["sceneIndex"] = len(all_scenes) + 1
             all_scenes.append(s)
-            story_so_far += " " + s["narration"]
 
-        # Brief 3s pause between chapters to respect free-tier RPM limits
-        time.sleep(3)
-
-    # Step 3: Synthesize Indian English Voiceover
-    full_narration = " ".join(s["narration"] for s in all_scenes)
-    word_count = len(full_narration.split())
-    log(f"Script complete: {word_count} words across {len(all_scenes)} scenes. Starting Edge-TTS...")
-
+    # Concatenate all MP3 chunks into public/voiceover.mp3 + add 2s ending buffer
     audio_path = "public/voiceover.mp3"
-    tts_voice = os.environ.get("TTS_VOICE", "en-IN-PrabhatNeural").strip() or "en-IN-PrabhatNeural"
-    communicate = edge_tts.Communicate(
-        full_narration,
-        voice=tts_voice,
-        rate="-4%",
-        pitch="-1Hz",
-    )
-    await asyncio.wait_for(communicate.save(audio_path), timeout=90)
-    log("Edge-TTS audio saved successfully!")
+    with open(audio_path, "wb") as outfile:
+        for cf in chunk_files:
+            with open(cf, "rb") as infile:
+                outfile.write(infile.read())
+            os.remove(cf)
 
-    # Step 4: Map exact MP3 duration to 30fps frames & build chapter timestamps
-    audio_len = MP3(audio_path).info.length
-    total_frames = int((audio_len + 2.0) * 30)
-    total_words = max(1, sum(len(s["narration"].split()) for s in all_scenes))
+    cursor_frame += 60  # 2-second breathing room at the very end
+    word_count = sum(len(s["narration"].split()) for s in all_scenes)
+    log(f"Combined voiceover ready: {cursor_frame/30:.1f}s ({word_count} words, {len(all_scenes)} scenes)")
 
-    cursor_frame = 0
-    chapter_timestamps = []
-    seen_chapters = set()
-
-    for idx, scene in enumerate(all_scenes):
-        if scene["chapter"] not in seen_chapters:
-            seen_chapters.add(scene["chapter"])
-            chapter_timestamps.append((format_timestamp(cursor_frame / 30.0), scene["chapter"]))
-
-        words = max(1, len(scene["narration"].split()))
-        dur_frames = max(90, int((words / total_words) * total_frames))
-        scene["startFrame"] = cursor_frame
-        scene["durationInFrames"] = dur_frames
-        scene["sceneIndex"] = idx + 1
-        cursor_frame += dur_frames
-
+    # Build full YouTube Description with exact chapter timestamps
     chapters_block = "\n".join(f"{ts} - {name}" for ts, name in chapter_timestamps)
     hashtags_str = " ".join(meta.get("hashtags", ["#LifeOfAnObject", "#Storytelling"]))
     full_description = f"{meta['seoSummary']}\n\nCHAPTERS:\n{chapters_block}\n\n{hashtags_str}"
