@@ -34,10 +34,12 @@ jobs:
           npm install
 
       - name: Generate 8-Chapter Script, Creator Pack & Voiceover
+        timeout-minutes: 5
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OBJECT_NAME: ${{ github.event.inputs.object_name }}
-        run: python scripts/generate_episode.py
+          PYTHONUNBUFFERED: "1"
+        run: python -u scripts/generate_episode.py
 
       - name: Render 10-12 Min Documentary Video
         run: |
