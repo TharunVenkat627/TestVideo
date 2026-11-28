@@ -1,12 +1,15 @@
-name: Auto-Create & Upload Stickman Video
+name: Life of an Object - Long Form Pipeline
 
 on:
-  workflow_dispatch: # Click "Run workflow" anytime
-  # schedule:
-  #   - cron: '0 12 * * *' # Uncomment to run daily at 5:30 PM IST
+  workflow_dispatch:
+    inputs:
+      object_name:
+        description: 'Object name (leave blank for random, e.g. A ₹10 Note)'
+        required: false
+        default: ''
 
 jobs:
-  build-and-upload:
+  produce-episode:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,12 +32,13 @@ jobs:
           pip install -r requirements.txt
           npm install
 
-      - name: Generate original script & TTS voiceover
+      - name: Generate 8-Chapter Script, Creator Pack & Voiceover
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OBJECT_NAME: ${{ github.event.inputs.object_name }}
         run: python scripts/generate_episode.py
 
-      - name: Render Remotion video
+      - name: Render 10-12 Min Documentary Video
         run: |
           npx remotion render src/index.ts MainVideo out/final.mp4 \
             --image-format=jpeg \
@@ -43,9 +47,15 @@ jobs:
             --audio-codec=mp3 \
             --concurrency=2
 
-      - name: Upload as Private video to YouTube
+      - name: Upload Private Video to YouTube
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: python scripts/upload_youtube.py
+
+      - name: Save Creator Pack (Prompts, Thumbnail, Hooks)
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-creator-pack
+          path: out/youtube_pack.md
