@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from google import genai
 from google.genai import types
 import edge_tts
@@ -24,32 +25,80 @@ Return ONLY valid JSON matching this exact schema:
 }
 """
 
+def get_candidate_models(client: genai.Client) -> list[str]:
+    """Fetch available text-generation models dynamically and prioritize fast Flash/Gemma models."""
+    preferred = [
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
+        "gemma-4-31b-it",
+        "gemma-4-26b-a4b-it",
+    ]
+    available = []
+    for m in client.models.list():
+        actions = m.supported_actions or []
+        if "generateContent" not in actions:
+            continue
+        name = m.name.replace("models/", "")
+        # Exclude image-only, research, and deprecated 2.5-flash endpoints
+        if any(skip in name for skip in ["image", "deep-research", "antigravity"]) or name == "gemini-2.5-flash":
+            continue
+        available.append(name)
+
+    ordered = [m for m in preferred if m in available]
+    for m in available:
+        if m not in ordered:
+            ordered.append(m)
+    return ordered or preferred
+
+def parse_json_safely(raw_text: str) -> dict:
+    """Strip markdown code fences if a fallback model (like Gemma) wraps its JSON output."""
+    cleaned = raw_text.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    return json.loads(cleaned)
+
 async def build_episode():
     os.makedirs("public", exist_ok=True)
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY secret is empty or missing in GitHub Actions.")
 
-    models_to_try = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite"]
-    response = None
+    client = genai.Client(api_key=api_key)
+    models_to_try = get_candidate_models(client)
+    print(f"Candidate models found for this API key: {models_to_try}")
+
+    episode = None
+    errors = []
 
     for model_name in models_to_try:
         try:
+            # Gemma models do not always support response_mime_type="application/json"
+            is_gemma = model_name.startswith("gemma")
+            config = types.GenerateContentConfig(
+                temperature=0.8,
+                **({} if is_gemma else {"response_mime_type": "application/json"}),
+            )
             response = client.models.generate_content(
                 model=model_name,
                 contents=PROMPT,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.8,
-                ),
+                config=config,
             )
-            print(f"Script generated using {model_name}")
+            episode = parse_json_safely(response.text)
+            print(f"SUCCESS: Script generated using {model_name}")
             break
         except Exception as e:
-            print(f"{model_name} failed ({e}), trying next...")
+            err_msg = f"{model_name} -> {type(e).__name__}: {e}"
+            print(err_msg)
+            errors.append(err_msg)
 
-    if response is None:
-        raise RuntimeError("All fallback Gemini models failed.")
-
-    episode = json.loads(response.text)
+    if episode is None:
+        raise RuntimeError("All candidate models failed:\n" + "\n".join(errors))
 
     # Combine narration and generate neural voiceover
     full_script = " ".join(s["narration"] for s in episode["scenes"])
