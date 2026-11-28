@@ -1,12 +1,18 @@
 import asyncio
+from datetime import datetime
 import json
 import os
 import random
 import re
+import time
 from google import genai
 from google.genai import types
 import edge_tts
 from mutagen.mp3 import MP3
+
+def log(msg: str):
+    now = datetime.now().strftime("%H:%M:%S")
+    print(f"[{now}] {msg}", flush=True)
 
 OBJECT_POOL = [
     "A ₹10 Note",
@@ -43,6 +49,7 @@ CHAPTER_SPECS = [
 ]
 
 def get_candidate_models(client: genai.Client) -> list[str]:
+    log("Fetching available models from Gemini API...")
     preferred = [
         "gemini-3.8-flash",
         "gemini-3.7-flash",
@@ -51,9 +58,9 @@ def get_candidate_models(client: genai.Client) -> list[str]:
         "gemini-3.5-flash-lite",
         "gemini-3.1-flash-lite",
         "gemini-2.5-flash-lite",
-        "gemini-2.5-pro",
         "gemma-4-31b-it",
         "gemma-4-26b-a4b-it",
+        "gemini-2.5-pro",
     ]
     available = []
     for m in client.models.list():
@@ -67,12 +74,15 @@ def get_candidate_models(client: genai.Client) -> list[str]:
     for m in available:
         if m not in ordered:
             ordered.append(m)
+    log(f"Candidate models ready: {ordered[:6]}...")
     return ordered or preferred
 
-def call_llm_json(client: genai.Client, models: list[str], prompt: str) -> dict:
+def call_llm_json(client: genai.Client, models: list[str], prompt: str, step_label: str) -> dict:
     last_err = None
     for model_name in models:
         try:
+            log(f"  -> [{step_label}] Calling {model_name}...")
+            t0 = time.time()
             is_gemma = model_name.startswith("gemma")
             cfg = types.GenerateContentConfig(
                 temperature=0.85,
@@ -81,11 +91,16 @@ def call_llm_json(client: genai.Client, models: list[str], prompt: str) -> dict:
             res = client.models.generate_content(model=model_name, contents=prompt, config=cfg)
             cleaned = re.sub(r"^```(?:json)?\s*", "", res.text.strip())
             cleaned = re.sub(r"\s*```$", "", cleaned)
-            return json.loads(cleaned)
+            parsed = json.loads(cleaned)
+            log(f"  <- [{step_label}] Success with {model_name} in {time.time() - t0:.1f}s")
+            return parsed
         except Exception as e:
-            last_err = f"{model_name}: {e}"
-            print(f"Retrying next model ({last_err})")
-    raise RuntimeError(f"All models failed. Last error: {last_err}")
+            last_err = f"{model_name} ({type(e).__name__}): {str(e)[:180]}"
+            log(f"  !! [{step_label}] Failed on {last_err}")
+            if "429" in str(e):
+                log("  .. Rate limit hit, pausing 5s before trying next model...")
+                time.sleep(5)
+    raise RuntimeError(f"All models failed on {step_label}. Last error: {last_err}")
 
 def format_timestamp(seconds: float) -> str:
     mins = int(seconds // 60)
@@ -93,6 +108,7 @@ def format_timestamp(seconds: float) -> str:
     return f"{mins}:{secs:02d}"
 
 async def build_episode():
+    log("Starting generate_episode.py...")
     os.makedirs("public", exist_ok=True)
     os.makedirs("out", exist_ok=True)
 
@@ -100,12 +116,20 @@ async def build_episode():
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is missing.")
 
-    client = genai.Client(api_key=api_key)
+    # Disable hidden SDK exponential-backoff retries and cap each HTTP request at 45s
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(
+            timeout=45_000,
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ),
+    )
+
     models = get_candidate_models(client)
     chosen_object = os.environ.get("OBJECT_NAME", "").strip() or random.choice(OBJECT_POOL)
-    print(f"Building Indian-English story episode for: {chosen_object}")
+    log(f"Selected object: {chosen_object}")
 
-    # Step 1: Generate Story Bible & Metadata
+    # Step 1: Story Bible & Metadata
     meta_prompt = f"""
 You are a master storyteller creating a Pixar-style emotional first-person story titled "Life of {chosen_object}" for a 10-12 minute YouTube video (Audience: age 13-35, India + Global).
 {STORY_STYLE_RULES}
@@ -131,14 +155,13 @@ Return ONLY valid JSON:
   "voiceoverNotes": "Warm Indian English narrator (en-IN-PrabhatNeural), slow conversational storytelling tone with gentle pauses on emotional beats"
 }}
 """
-    meta = call_llm_json(client, models, meta_prompt)
+    meta = call_llm_json(client, models, meta_prompt, "Story Bible")
 
-    # Step 2: Generate all 8 Chapters sequentially
+    # Step 2: Generate 8 Chapters sequentially
     all_scenes = []
     story_so_far = ""
 
     for ch_title, approx_time, ch_goal in CHAPTER_SPECS:
-        print(f"Writing {ch_title}...")
         ch_prompt = f"""
 Continue the warm, emotional first-person story "Life of {chosen_object}" (First owner: {meta['firstOwnerName']}).
 {STORY_STYLE_RULES}
@@ -166,28 +189,20 @@ Return ONLY valid JSON:
   ]
 }}
 """
-        ch_data = call_llm_json(client, models, ch_prompt)
+        ch_data = call_llm_json(client, models, ch_prompt, ch_title)
         for s in ch_data.get("scenes", []):
             s["chapter"] = ch_title
             all_scenes.append(s)
             story_so_far += " " + s["narration"]
 
-    # Step 3: Synthesize warm Indian English voiceover via Edge-TTS
+        # Brief 3s pause between chapters to respect free-tier RPM limits
+        time.sleep(3)
+
+    # Step 3: Synthesize Indian English Voiceover
     full_narration = " ".join(s["narration"] for s in all_scenes)
     word_count = len(full_narration.split())
-    print(f"Total script generated: {word_count} words across {len(all_scenes)} scenes.")
+    log(f"Script complete: {word_count} words across {len(all_scenes)} scenes. Starting Edge-TTS...")
 
-    audio_path = "public/voiceover.mp3"
-    # Use en-IN-PrabhatNeural (warm Indian male storyteller) or en-IN-NeerjaNeural (Indian female)
-    tts_voice = os.environ.get("TTS_VOICE", "en-IN-PrabhatNeural").strip() or "en-IN-PrabhatNeural"
-    communicate = edge_tts.Communicate(
-        full_narration,
-        voice=tts_voice,
-        rate="-4%",
-        pitch="-1Hz",
-    )
-    await communicate.save(audio_path)
-    print("Synthesizing Indian English voiceover via Edge-TTS...", flush=True)
     audio_path = "public/voiceover.mp3"
     tts_voice = os.environ.get("TTS_VOICE", "en-IN-PrabhatNeural").strip() or "en-IN-PrabhatNeural"
     communicate = edge_tts.Communicate(
@@ -197,7 +212,7 @@ Return ONLY valid JSON:
         pitch="-1Hz",
     )
     await asyncio.wait_for(communicate.save(audio_path), timeout=90)
-    print("Voiceover saved successfully!", flush=True)
+    log("Edge-TTS audio saved successfully!")
 
     # Step 4: Map exact MP3 duration to 30fps frames & build chapter timestamps
     audio_len = MP3(audio_path).info.length
@@ -238,7 +253,7 @@ Return ONLY valid JSON:
     with open("public/episode.json", "w", encoding="utf-8") as f:
         json.dump(episode_payload, f, indent=2)
 
-    # Step 5: Export complete Creator Pack (Full Script + Prompts + Thumbnail + Hooks)
+    # Step 5: Export Creator Pack
     script_lines = []
     curr_ch = ""
     for s in all_scenes:
@@ -268,7 +283,7 @@ Return ONLY valid JSON:
     with open("out/youtube_pack.md", "w", encoding="utf-8") as f:
         f.write("\n".join(pack_lines))
 
-    print(f"Episode ready: '{meta['title']}' ({cursor_frame/30/60:.2f} mins)")
+    log(f"DONE! Episode ready: '{meta['title']}' ({cursor_frame/30/60:.2f} mins)")
 
 if __name__ == "__main__":
     asyncio.run(build_episode())
