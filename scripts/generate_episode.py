@@ -51,8 +51,6 @@ CHAPTER_SPECS = [
 def get_candidate_models(client: genai.Client) -> list[str]:
     log("Fetching available models from Gemini API...")
     preferred = [
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
         "gemini-3.6-flash",
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
@@ -60,14 +58,13 @@ def get_candidate_models(client: genai.Client) -> list[str]:
         "gemini-2.5-flash-lite",
         "gemma-4-31b-it",
         "gemma-4-26b-a4b-it",
-        "gemini-2.5-pro",
     ]
     available = []
     for m in client.models.list():
         if "generateContent" not in (m.supported_actions or []):
             continue
         name = m.name.replace("models/", "")
-        if any(s in name for s in ["image", "deep-research", "antigravity"]) or name == "gemini-2.5-flash":
+        if any(s in name for s in ["image", "deep-research", "antigravity", "3.8", "3.7"]) or name == "gemini-2.5-flash":
             continue
         available.append(name)
     ordered = [m for m in preferred if m in available]
@@ -76,6 +73,34 @@ def get_candidate_models(client: genai.Client) -> list[str]:
             ordered.append(m)
     log(f"Candidate models ready: {ordered[:6]}...")
     return ordered or preferred
+
+def call_llm_json(client: genai.Client, models: list[str], prompt: str, step_label: str) -> dict:
+    last_err = None
+    for idx, model_name in enumerate(list(models)):
+        try:
+            log(f"  -> [{step_label}] Calling {model_name}...")
+            t0 = time.time()
+            is_gemma = model_name.startswith("gemma")
+            cfg = types.GenerateContentConfig(
+                temperature=0.85,
+                **({} if is_gemma else {"response_mime_type": "application/json"}),
+            )
+            res = client.models.generate_content(model=model_name, contents=prompt, config=cfg)
+            cleaned = re.sub(r"^```(?:json)?\s*", "", res.text.strip())
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+            parsed = json.loads(cleaned)
+            log(f"  <- [{step_label}] Success with {model_name} in {time.time() - t0:.1f}s")
+            # Pin the working model to the front so subsequent chapters skip failed models
+            if idx > 0:
+                models.remove(model_name)
+                models.insert(0, model_name)
+            return parsed
+        except Exception as e:
+            last_err = f"{model_name} ({type(e).__name__}): {str(e)[:180]}"
+            log(f"  !! [{step_label}] Failed on {last_err}")
+            if "429" in str(e):
+                time.sleep(2)
+    raise RuntimeError(f"All models failed on {step_label}. Last error: {last_err}")
 
 def call_llm_json(client: genai.Client, models: list[str], prompt: str, step_label: str) -> dict:
     last_err = None
