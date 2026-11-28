@@ -34,7 +34,7 @@ jobs:
           npm install
 
       - name: Generate 8-Chapter Script, Creator Pack & Voiceover
-        timeout-minutes: 5
+        timeout-minutes: 8
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OBJECT_NAME: ${{ github.event.inputs.object_name }}
