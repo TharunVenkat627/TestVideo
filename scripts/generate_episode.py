@@ -12,13 +12,13 @@ def log(msg: str):
     print(f"[{now}] {msg}", flush=True)
 
 OBJECT_POOL = [
-    "A ₹10 Note",
+    "A Leather Cricket Ball",
+    "A School Bag",
     "A Wooden Pencil",
+    "A ₹10 Note",
     "A Plastic Water Bottle",
     "A Phone Charger",
-    "A School Bag",
     "An Old Umbrella",
-    "A Leather Cricket Ball",
     "A Teddy Bear",
     "A School Bench",
     "A Paper Train Ticket",
@@ -26,9 +26,8 @@ OBJECT_POOL = [
     "A Worn-Out Slipper",
 ]
 
-# Tight 8-chapter arc (~780 words total = ~5.5 minutes of punchy storytelling across ~36 scenes)
 CHAPTER_SPECS = [
-    ("0. HOOK", "Gripping 3-scene mystery hook in first person. Tease a dramatic life of love, heartbreak, and survival without spoiling the ending. ~70 words across 3 scenes."),
+    ("0. HOOK", "Gripping 3-scene mystery hook in first person. Tease a dramatic journey of love, heartbreak, and survival without spoiling the ending. ~70 words across 3 scenes."),
     ("1. BIRTH", "Factory birth, raw materials, opening eyes for the first time, 1 surprising real-world fact, and my big dream. ~105 words across 5 scenes."),
     ("2. FIRST HOME", "Mini-hook + bought from a local Indian shop, meeting my first owner, funny moments, and our warm bond. ~110 words across 5 scenes."),
     ("3. GOLDEN DAYS", "Mini-hook + our best adventures together, daily routine, and how proud I felt helping my owner. ~110 words across 5 scenes."),
@@ -38,8 +37,22 @@ CHAPTER_SPECS = [
     ("7. ENDING & REBIRTH", "Final fate (recycled or second life), emotional callback to my FIRST owner, life lesson, quote, and comment question. ~90 words across 4 scenes."),
 ]
 
-# Overlap frames for TransitionSeries so total video length matches exact sum of scene frames
-TRANSITION_OVERLAP_FRAMES = 15  # 0.5 seconds smooth transition between scenes
+TRANSITION_OVERLAP_FRAMES = 15
+
+def infer_object_type(object_name: str, fallback: str = "ball") -> str:
+    lower = object_name.lower()
+    mapping = [
+        ("bag", "bag"), ("backpack", "bag"), ("pencil", "pencil"),
+        ("bottle", "bottle"), ("note", "note"), ("rupee", "note"),
+        ("charger", "charger"), ("umbrella", "umbrella"), ("ball", "ball"),
+        ("cricket", "ball"), ("teddy", "teddy"), ("bear", "teddy"),
+        ("bench", "bench"), ("ticket", "ticket"), ("light", "light"),
+        ("slipper", "slipper"),
+    ]
+    for keyword, normalized in mapping:
+        if keyword in lower:
+            return normalized
+    return fallback
 
 def get_candidate_models(client: genai.Client) -> list[str]:
     preferred = [
@@ -76,7 +89,7 @@ def call_llm_json(client: genai.Client, models: list[str], prompt: str, label: s
             )
             res = client.models.generate_content(model=model_name, contents=prompt, config=cfg)
             cleaned = re.sub(r"^```(?:json)?\s*", "", res.text.strip())
-            cleaned = re.sub(r"\s*```\$", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
             parsed = json.loads(cleaned)
             log(f"  <- [{label}] {model_name} ({time.time() - t0:.1f}s)")
             if idx > 0:
@@ -107,14 +120,15 @@ def build_episode():
     )
     models = get_candidate_models(client)
     chosen_object = os.environ.get("OBJECT_NAME", "").strip() or random.choice(OBJECT_POOL)
-    log(f"Building mute animated episode + script for: {chosen_object}")
+    locked_type = infer_object_type(chosen_object)
+    log(f"Building Multi-Actor Story Episode for: {chosen_object} (type={locked_type})")
 
     meta_prompt = f"""
 Create a tight, emotional first-person story bible for "Life of {chosen_object}" (Indian + Global audience, simple everyday Indian English).
 Return ONLY valid JSON:
 {{
   "objectName": "{chosen_object}",
-  "objectType": "pencil | bottle | note | charger | bag | umbrella | ball | teddy | bench | ticket | light | slipper",
+  "objectType": "{locked_type}",
   "primaryColor": "#HEXCOLOR",
   "accentColor": "#HEXCOLOR",
   "firstOwnerName": "Warm Indian first name (e.g., Aarav, Diya, Kabir, Ananya)",
@@ -123,7 +137,7 @@ Return ONLY valid JSON:
   "seoSummary": "120-word warm SEO YouTube description",
   "pinnedComment": "1 emotional question for viewers to comment",
   "hashtags": ["#LifeOfAnObject", "#Storytelling", "#IndianStories", "#Animation"],
-  "thumbnailIdea": "3D Pixar-style close-up of {chosen_object} with big emotional eyes, dark dramatic lighting, 3-word bold text"
+  "thumbnailIdea": "3D Pixar-style scene of {chosen_object} with expressive eyes alongside its owner, cinematic lighting"
 }}
 """
     meta = call_llm_json(client, models, meta_prompt, "Story Bible")
@@ -137,19 +151,26 @@ Write {ch_title} of the first-person story "Life of {chosen_object}" (First owne
 Story so far: {story_so_far[-650:] if story_so_far else "Opening."}
 Goal: {ch_goal}
 
-STRICT PACING & VISUAL RULES:
-- Use simple, natural Indian English words. Zero fluff or dragging—every single sentence must move the story forward!
-- Each scene's "narration" MUST be 18 to 25 words (so visuals cut every 7-10 seconds).
-- Choose the exact "transition", "bodyAnim", and "propEffect" that fits the mood of that scene.
+STRICT SCENE CHOREOGRAPHY RULES:
+- Use simple, natural Indian English words. Zero fluff—every sentence must move the action forward!
+- Each scene's "narration" MUST be 18 to 25 words (7-10 seconds).
+- CRITICAL: Match the visual action ("coActor" + "interaction") to what happens in that exact sentence!
+  * If a boy/girl catches, throws, or hits the object -> coActor="boy" or "girl", interaction="throw_catch"
+  * If a dog chases or plays with the object -> coActor="dog", interaction="dog_chase"
+  * If a kid carries/uses/walks with the object -> coActor="boy" or "girl", interaction="hand_carry"
+  * If bought at a shop -> coActor="shopkeeper", interaction="buy_exchange"
+  * If dropped, left behind, or thrown away -> coActor="boy" or "worker", interaction="drop_abandon"
+  * If it's an emotional close-up monologue -> coActor="none", interaction="solo_hero"
 
 Return ONLY valid JSON:
 {{
   "scenes": [
     {{
-      "narration": "18-25 words of punchy, emotional first-person narration.",
+      "narration": "18-25 words of punchy, visual first-person storytelling.",
       "subtitle": "5-8 word punchy on-screen caption",
+      "coActor": "none | boy | girl | dog | shopkeeper | worker",
+      "interaction": "solo_hero | throw_catch | dog_chase | hand_carry | buy_exchange | drop_abandon",
       "emotion": "happy | curious | proud | sad | lonely | hopeful | shocked",
-      "bodyAnim": "bounce_joy | shiver_fear | spin_celebrate | heartbeat_tense | float_dream | slump_sad | wave_greet",
       "transition": "slide_left | slide_up | wipe_diagonal | fade_smooth | flip_card",
       "setting": "factory | store_shelf | home_desk | school_outdoor | rainy_street | dustbin_dark | recycling_light",
       "cameraMove": "zoom_in | zoom_out | pan_left | pan_right"
@@ -163,7 +184,6 @@ Return ONLY valid JSON:
             all_scenes.append(s)
             story_so_far += " " + s["narration"]
 
-    # Calculate exact frame timings based on natural speech speed (2.3 words/sec @ 30fps)
     WORDS_PER_SEC = 2.3
     FPS = 30
     cursor_frame = 0
@@ -177,7 +197,6 @@ Return ONLY valid JSON:
 
         words = max(8, len(scene["narration"].split()))
         speech_seconds = words / WORDS_PER_SEC
-        # Add overlap compensation so TransitionSeries plays for the exact speech duration
         overlap_pad = TRANSITION_OVERLAP_FRAMES if idx < len(all_scenes) - 1 else 0
         dur_frames = max(120, int(round(speech_seconds * FPS)) + overlap_pad)
 
@@ -186,9 +205,9 @@ Return ONLY valid JSON:
         scene["durationInFrames"] = dur_frames
         cursor_frame += (dur_frames - overlap_pad)
 
-    total_frames = cursor_frame + 45  # 1.5s clean outro hold
+    total_frames = cursor_frame + 45
     word_count = sum(len(s["narration"].split()) for s in all_scenes)
-    log(f"Mute episode ready: {total_frames/FPS:.1f}s ({word_count} words across {len(all_scenes)} scenes)")
+    log(f"Multi-actor episode ready: {total_frames/FPS:.1f}s ({word_count} words, {len(all_scenes)} scenes)")
 
     chapters_block = "\n".join(f"{ts} - {name}" for ts, name in chapter_timestamps)
     hashtags_str = " ".join(meta.get("hashtags", ["#LifeOfAnObject"]))
@@ -196,7 +215,7 @@ Return ONLY valid JSON:
 
     episode_payload = {
         "objectName": chosen_object,
-        "objectType": meta.get("objectType", "bottle"),
+        "objectType": locked_type,
         "primaryColor": meta.get("primaryColor", "#38BDF8"),
         "accentColor": meta.get("accentColor", "#0284C7"),
         "title": meta["title"],
@@ -209,7 +228,6 @@ Return ONLY valid JSON:
     with open("public/episode.json", "w", encoding="utf-8") as f:
         json.dump(episode_payload, f, indent=2)
 
-    # Export clean Voiceover Script + Timestamps for manual audio recording/generation
     clean_voiceover_paragraphs = []
     timestamped_lines = []
     curr_ch = ""
@@ -221,15 +239,15 @@ Return ONLY valid JSON:
             timestamped_lines.append(f"\n### {curr_ch} ({format_timestamp(s['startFrame']/FPS)})")
         clean_voiceover_paragraphs.append(s["narration"])
         timestamped_lines.append(
-            f"- **[{format_timestamp(s['startFrame']/FPS)} - {format_timestamp((s['startFrame']+s['durationInFrames'])/FPS)}]** ({s['emotion'].upper()}): {s['narration']}"
+            f"- **[{format_timestamp(s['startFrame']/FPS)} - {format_timestamp((s['startFrame']+s['durationInFrames'])/FPS)}]** [{s.get('coActor', 'none')} -> {s.get('interaction', 'solo_hero')}]: {s['narration']}"
         )
 
     pack_lines = [
-        f"# VOICEOVER SCRIPT & CREATOR PACK: {meta['title']}\n",
+        f"# VOICEOVER SCRIPT & SCENE SYNC PACK: {meta['title']}\n",
         f"**Object:** {chosen_object} | **Target Video Length:** {format_timestamp(total_frames / FPS)} | **Total Words:** {word_count}\n",
         "## 1. Clean Copy-Paste Voiceover Script (For ElevenLabs / Recording)",
         *clean_voiceover_paragraphs,
-        "\n## 2. Scene-by-Scene Sync Guide (Match Your Audio Timing)",
+        "\n## 2. Scene-by-Scene Visual Sync Guide",
         *timestamped_lines,
         "\n## 3. Thumbnail Idea",
         f"{meta['thumbnailIdea']}\n",
