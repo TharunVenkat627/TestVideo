@@ -187,6 +187,17 @@ Return ONLY valid JSON:
         pitch="-1Hz",
     )
     await communicate.save(audio_path)
+    print("Synthesizing Indian English voiceover via Edge-TTS...", flush=True)
+    audio_path = "public/voiceover.mp3"
+    tts_voice = os.environ.get("TTS_VOICE", "en-IN-PrabhatNeural").strip() or "en-IN-PrabhatNeural"
+    communicate = edge_tts.Communicate(
+        full_narration,
+        voice=tts_voice,
+        rate="-4%",
+        pitch="-1Hz",
+    )
+    await asyncio.wait_for(communicate.save(audio_path), timeout=90)
+    print("Voiceover saved successfully!", flush=True)
 
     # Step 4: Map exact MP3 duration to 30fps frames & build chapter timestamps
     audio_len = MP3(audio_path).info.length
