@@ -6,6 +6,7 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
+import { Icon } from '@iconify/react';
 import { linearTiming, TransitionSeries } from '@remotion/transitions';
 import { fade } from '@remotion/transitions/fade';
 import { slide } from '@remotion/transitions/slide';
@@ -16,15 +17,15 @@ export interface SceneItem {
   chapter: string;
   narration: string;
   subtitle: string;
+  coActor?: 'none' | 'boy' | 'girl' | 'dog' | 'shopkeeper' | 'worker';
+  interaction?:
+    | 'solo_hero'
+    | 'throw_catch'
+    | 'dog_chase'
+    | 'hand_carry'
+    | 'buy_exchange'
+    | 'drop_abandon';
   emotion: 'happy' | 'curious' | 'proud' | 'sad' | 'lonely' | 'hopeful' | 'shocked';
-  bodyAnim:
-    | 'bounce_joy'
-    | 'shiver_fear'
-    | 'spin_celebrate'
-    | 'heartbeat_tense'
-    | 'float_dream'
-    | 'slump_sad'
-    | 'wave_greet';
   transition: 'slide_left' | 'slide_up' | 'wipe_diagonal' | 'fade_smooth' | 'flip_card';
   setting:
     | 'factory'
@@ -51,6 +52,21 @@ export interface EpisodeData {
   scenes: SceneItem[];
 }
 
+const OBJECT_ICON_MAP: Record<string, string> = {
+  bag: 'fluent-emoji:backpack',
+  pencil: 'fluent-emoji:pencil',
+  bottle: 'fluent-emoji:cup-with-straw',
+  note: 'fluent-emoji:dollar-banknote',
+  charger: 'fluent-emoji:electric-plug',
+  umbrella: 'fluent-emoji:umbrella',
+  ball: 'fluent-emoji:cricket-game',
+  teddy: 'fluent-emoji:teddy-bear',
+  bench: 'fluent-emoji:chair',
+  ticket: 'fluent-emoji:admission-tickets',
+  light: 'fluent-emoji:light-bulb',
+  slipper: 'fluent-emoji:thong-sandal',
+};
+
 const SETTING_PALETTES: Record<
   SceneItem['setting'],
   { top: string; bottom: string; floor: string; light: string; propColor: string }
@@ -64,235 +80,128 @@ const SETTING_PALETTES: Record<
   recycling_light: { top: '#064E3B', bottom: '#10B981', floor: '#047857', light: '#A7F3D0', propColor: '#34D399' },
 };
 
-const AnimatedObjectCharacter: React.FC<{
-  objectType: string;
-  primaryColor: string;
-  accentColor: string;
-  emotion: SceneItem['emotion'];
-  bodyAnim: SceneItem['bodyAnim'];
-}> = ({ objectType, primaryColor, accentColor, emotion, bodyAnim }) => {
+/* === ANIMATED HUMAN CHARACTER (Boy / Girl / Shopkeeper / Worker) === */
+const HumanActor: React.FC<{
+  role: 'boy' | 'girl' | 'shopkeeper' | 'worker';
+  x: number;
+  y: number;
+  facing: 1 | -1;
+  pose: 'run' | 'catch_arms_up' | 'walk_carry' | 'hand_over' | 'walk_away';
+}> = ({ role, x, y, facing, pose }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const stride = Math.sin(frame * 0.35);
 
-  // Natural expressive rhythm (even in mute video, character acts out the narration)
-  const actPulse = Math.abs(Math.sin(frame * 0.35));
-  const mouthOpen = actPulse > 0.48;
-  const isBlinking = frame % 95 > 90;
-  const isSad = emotion === 'sad' || emotion === 'lonely';
-  const isShocked = emotion === 'shocked';
-  const isHappy = emotion === 'happy' || emotion === 'proud' || emotion === 'hopeful';
+  const shirtColor =
+    role === 'boy'
+      ? '#2563EB'
+      : role === 'girl'
+      ? '#EC4899'
+      : role === 'shopkeeper'
+      ? '#D97706'
+      : '#475569';
 
-  let offsetX = 0;
-  let offsetY = Math.sin(frame * 0.08) * 6;
-  let rotation = 0;
-  let scaleX = 1;
-  let scaleY = 1;
-  let leftArmAngle = 25;
-  let rightArmAngle = -25;
+  const leftLeg = pose === 'run' || pose === 'walk_carry' || pose === 'walk_away' ? stride * 36 : -8;
+  const rightLeg = pose === 'run' || pose === 'walk_carry' || pose === 'walk_away' ? -stride * 36 : 8;
 
-  if (bodyAnim === 'bounce_joy') {
-    const bounce = Math.abs(Math.sin(frame * 0.26));
-    offsetY = -bounce * 55;
-    scaleY = 1 + bounce * 0.09;
-    scaleX = 1 - bounce * 0.06;
-    leftArmAngle = 130 + Math.sin(frame * 0.35) * 20;
-    rightArmAngle = -130 - Math.sin(frame * 0.35) * 20;
-  } else if (bodyAnim === 'shiver_fear') {
-    offsetX = Math.sin(frame * 1.5) * 8;
-    rotation = Math.sin(frame * 1.3) * 4.5;
-    leftArmAngle = -35;
-    rightArmAngle = 35;
-  } else if (bodyAnim === 'spin_celebrate') {
-    const spin = spring({ frame, fps, config: { damping: 12, stiffness: 85 } });
-    rotation = interpolate(spin, [0, 1], [0, 360]);
-    offsetY = -Math.sin(Math.min(1, frame / 28) * Math.PI) * 95;
-    leftArmAngle = 148;
-    rightArmAngle = -148;
-  } else if (bodyAnim === 'heartbeat_tense') {
-    const beat = Math.pow(Math.abs(Math.sin(frame * 0.22)), 6);
-    scaleX = 1 + beat * 0.15;
-    scaleY = 1 + beat * 0.15;
-  } else if (bodyAnim === 'slump_sad') {
-    offsetY = 26;
-    rotation = -13;
-    scaleY = 0.91;
-    leftArmAngle = 8;
-    rightArmAngle = -8;
-  } else if (bodyAnim === 'wave_greet') {
-    rotation = Math.sin(frame * 0.09) * 5;
-    rightArmAngle = -138 + Math.sin(frame * 0.4) * 28;
-    leftArmAngle = 22 + actPulse * 16;
-  } else {
-    offsetY = Math.sin(frame * 0.09) * 16;
-    rotation = Math.sin(frame * 0.06) * 5;
-    leftArmAngle = 35 + actPulse * 35;
-    rightArmAngle = -35 - actPulse * 35;
+  let leftArm = 20;
+  let rightArm = -20;
+  if (pose === 'catch_arms_up') {
+    leftArm = -145 + Math.sin(frame * 0.3) * 8;
+    rightArm = -135 - Math.sin(frame * 0.3) * 8;
+  } else if (pose === 'walk_carry' || pose === 'hand_over') {
+    leftArm = -65;
+    rightArm = -75;
+  } else if (pose === 'run' || pose === 'walk_away') {
+    leftArm = -stride * 42;
+    rightArm = stride * 42;
   }
 
+  const bob = pose === 'run' ? Math.abs(stride) * -14 : Math.abs(stride) * -5;
+
   return (
-    <g
-      transform={`translate(${960 + offsetX}, ${550 + offsetY}) rotate(${rotation}) scale(${scaleX}, ${scaleY})`}
-    >
-      {/* Dynamic Contact Shadow */}
-      <ellipse
-        cx="0"
-        cy={250 - offsetY}
-        rx={145 + offsetY * 0.4}
-        ry="22"
-        fill="rgba(0,0,0,0.45)"
-      />
+    <g transform={`translate(${x}, ${y + bob}) scale(${facing}, 1)`}>
+      {/* Ground Shadow */}
+      <ellipse cx="0" cy={210 - bob} rx="65" ry="14" fill="rgba(0,0,0,0.35)" />
 
-      {/* Floating Comic/Pixar Emotion Indicator above Head */}
-      {isShocked && (
-        <g transform={`translate(115, ${-210 + Math.sin(frame * 0.4) * 8})`}>
-          <rect x="-10" y="-42" width="20" height="44" rx="10" fill="#FACC15" stroke="#0F172A" strokeWidth="4" />
-          <circle cx="0" cy="16" r="10" fill="#FACC15" stroke="#0F172A" strokeWidth="4" />
-        </g>
-      )}
-      {emotion === 'curious' && (
-        <text
-          x="110"
-          y={-195 + Math.sin(frame * 0.2) * 8}
-          fontSize="68"
-          fontWeight="900"
-          fill="#38BDF8"
-          stroke="#0F172A"
-          strokeWidth="3"
-          fontFamily="system-ui, sans-serif"
-        >
-          ?
-        </text>
-      )}
-      {isHappy && (
-        <g transform={`translate(115, ${-200 - (frame % 40) * 0.8})`} opacity={1 - (frame % 40) / 40}>
-          <path
-            d="M 0 12 C -18 -6, -34 10, 0 34 C 34 10, 18 -6, 0 12 Z"
-            fill="#FB7185"
-          />
-        </g>
-      )}
-
-      {/* Expressive Cartoon Arms */}
-      <g transform={`translate(-76, 10) rotate(${leftArmAngle})`}>
-        <path
-          d="M 0 0 Q -48 36 -68 78"
-          fill="none"
-          stroke="#0F172A"
-          strokeWidth="12"
-          strokeLinecap="round"
-        />
-        <circle cx="-68" cy="78" r="13" fill="#FFFFFF" stroke="#0F172A" strokeWidth="5" />
+      {/* Legs */}
+      <g transform={`translate(-18, 75) rotate(${leftLeg})`}>
+        <rect x="-12" y="0" width="24" height="115" rx="12" fill="#1E293B" />
       </g>
-      <g transform={`translate(76, 10) rotate(${rightArmAngle})`}>
-        <path
-          d="M 0 0 Q 48 36 68 78"
-          fill="none"
-          stroke="#0F172A"
-          strokeWidth="12"
-          strokeLinecap="round"
-        />
-        <circle cx="68" cy="78" r="13" fill="#FFFFFF" stroke="#0F172A" strokeWidth="5" />
+      <g transform={`translate(18, 75) rotate(${rightLeg})`}>
+        <rect x="-12" y="0" width="24" height="115" rx="12" fill="#0F172A" />
       </g>
 
-      {/* 3D-Styled Object Body */}
-      {objectType === 'pencil' ? (
-        <g>
-          <rect x="-44" y="-235" width="88" height="45" rx="14" fill="#F43F5E" />
-          <rect x="-46" y="-195" width="92" height="24" fill="#CBD5E1" />
-          <rect x="-44" y="-171" width="88" height="310" fill={primaryColor || '#F59E0B'} />
-          <rect x="-14" y="-171" width="28" height="310" fill={accentColor || '#D97706'} opacity="0.45" />
-          <polygon points="-44,139 44,139 0,225" fill="#FDE68A" />
-          <polygon points="-14,198 14,198 0,225" fill="#1E293B" />
-        </g>
-      ) : objectType === 'note' || objectType === 'ticket' ? (
-        <g>
-          <rect
-            x="-195"
-            y="-115"
-            width="390"
-            height="230"
-            rx="18"
-            fill={primaryColor || '#D97706'}
-            stroke={accentColor || '#FEF3C7'}
-            strokeWidth="8"
-          />
-          <rect
-            x="-170"
-            y="-90"
-            width="340"
-            height="180"
-            rx="12"
-            fill="none"
-            stroke="rgba(255,255,255,0.4)"
-            strokeWidth="3"
-            strokeDasharray="10 6"
-          />
-        </g>
-      ) : objectType === 'ball' ? (
-        <g>
-          <circle cx="0" cy="10" r="158" fill={primaryColor || '#DC2626'} />
-          <path d="M -110 -95 Q 0 10 -110 115" fill="none" stroke="#F8FAFC" strokeWidth="5" strokeDasharray="10 8" />
-          <path d="M 110 -95 Q 0 10 110 115" fill="none" stroke="#F8FAFC" strokeWidth="5" strokeDasharray="10 8" />
-        </g>
+      {/* Torso */}
+      <rect x="-42" y="-55" width="84" height="145" rx="28" fill={shirtColor} />
+
+      {/* Head */}
+      <circle cx="0" cy="-105" r="46" fill="#FDBA74" />
+      {/* Hair */}
+      {role === 'girl' ? (
+        <>
+          <path d="M -46 -105 Q 0 -170 46 -105 Z" fill="#1E293B" />
+          <circle cx="-48" cy="-115" r="22" fill="#1E293B" />
+        </>
       ) : (
-        <g>
-          <rect x="-38" y="-225" width="76" height="36" rx="8" fill={accentColor || '#0284C7'} />
-          <path
-            d="M -34 -189 L -88 -120 L -88 185 Q -88 215 -55 215 L 55 215 Q 88 215 88 185 L 88 -120 L 34 -189 Z"
-            fill={primaryColor || '#38BDF8'}
-          />
-          <rect x="-60" y="-100" width="18" height="270" rx="9" fill="rgba(255,255,255,0.35)" />
-        </g>
+        <path d="M -46 -110 Q 0 -168 46 -110 Z" fill="#0F172A" />
       )}
 
-      {/* Expressive Eyes & Mouth */}
-      <g transform="translate(0, -15)">
-        {isBlinking ? (
-          <>
-            <line x1="-60" y1="0" x2="-18" y2="0" stroke="#0F172A" strokeWidth="6" strokeLinecap="round" />
-            <line x1="18" y1="0" x2="60" y2="0" stroke="#0F172A" strokeWidth="6" strokeLinecap="round" />
-          </>
-        ) : (
-          <>
-            <circle cx="-38" cy="0" r={isShocked ? 28 : 24} fill="#FFFFFF" />
-            <circle cx="38" cy="0" r={isShocked ? 28 : 24} fill="#FFFFFF" />
-            <circle cx="-34" cy={isSad ? 6 : -2} r={isShocked ? 9 : 12} fill="#0F172A" />
-            <circle cx="42" cy={isSad ? 6 : -2} r={isShocked ? 9 : 12} fill="#0F172A" />
-            <circle cx="-39" cy={isSad ? 1 : -7} r="4.5" fill="#FFFFFF" />
-            <circle cx="37" cy={isSad ? 1 : -7} r="4.5" fill="#FFFFFF" />
-          </>
-        )}
+      {/* Happy Eyes & Smile */}
+      <circle cx="14" cy="-108" r="5.5" fill="#0F172A" />
+      <circle cx="32" cy="-108" r="5.5" fill="#0F172A" />
+      <path d="M 14 -88 Q 24 -76 34 -88" fill="none" stroke="#0F172A" strokeWidth="4.5" strokeLinecap="round" />
 
-        {isSad && (
-          <circle
-            cx="-56"
-            cy={24 + (frame % 35) * 2.2}
-            r={Math.max(0, 7 - (frame % 35) * 0.15)}
-            fill="#38BDF8"
-          />
-        )}
+      {/* Front & Back Arms */}
+      <g transform={`translate(10, -35) rotate(${rightArm})`}>
+        <rect x="-10" y="0" width="20" height="95" rx="10" fill="#FDBA74" />
+      </g>
+      <g transform={`translate(-10, -35) rotate(${leftArm})`}>
+        <rect x="-10" y="0" width="20" height="95" rx="10" fill="#FB923C" />
+      </g>
+    </g>
+  );
+};
 
-        {isSad ? (
-          <>
-            <line x1="-64" y1="-26" x2="-18" y2="-38" stroke="#0F172A" strokeWidth="6" strokeLinecap="round" />
-            <line x1="18" y1="-38" x2="64" y2="-26" stroke="#0F172A" strokeWidth="6" strokeLinecap="round" />
-          </>
-        ) : (
-          <>
-            <path d="M -62 -32 Q -38 -46 -16 -32" fill="none" stroke="#0F172A" strokeWidth="6" strokeLinecap="round" />
-            <path d="M 16 -32 Q 38 -46 62 -32" fill="none" stroke="#0F172A" strokeWidth="6" strokeLinecap="round" />
-          </>
-        )}
+/* === ANIMATED PLAYFUL DOG === */
+const DogActor: React.FC<{ x: number; y: number }> = ({ x, y }) => {
+  const frame = useCurrentFrame();
+  const runCycle = Math.sin(frame * 0.45);
+  const hopY = Math.abs(runCycle) * -22;
+  const tailWag = Math.sin(frame * 0.8) * 28;
 
-        {isShocked ? (
-          <ellipse cx="0" cy="52" rx="18" ry="22" fill="#0F172A" />
-        ) : mouthOpen ? (
-          <ellipse cx="0" cy="48" rx="17" ry={8 + actPulse * 7} fill="#0F172A" />
-        ) : isSad ? (
-          <path d="M -24 56 Q 0 38 24 56" fill="none" stroke="#0F172A" strokeWidth="5.5" strokeLinecap="round" />
-        ) : (
-          <path d="M -26 44 Q 0 64 26 44" fill="none" stroke="#0F172A" strokeWidth="5.5" strokeLinecap="round" />
-        )}
+  return (
+    <g transform={`translate(${x}, ${y + hopY})`}>
+      <ellipse cx="0" cy={95 - hopY} rx="75" ry="14" fill="rgba(0,0,0,0.35)" />
+
+      {/* Wagging Tail */}
+      <g transform={`translate(-75, -15) rotate(${tailWag})`}>
+        <path d="M 0 0 Q -35 -35 -20 -60" fill="none" stroke="#92400E" strokeWidth="14" strokeLinecap="round" />
+      </g>
+
+      {/* Running Legs */}
+      <g transform={`translate(-45, 35) rotate(${runCycle * 40})`}>
+        <rect x="-9" y="0" width="18" height="55" rx="9" fill="#78350F" />
+      </g>
+      <g transform={`translate(45, 35) rotate(${-runCycle * 40})`}>
+        <rect x="-9" y="0" width="18" height="55" rx="9" fill="#78350F" />
+      </g>
+
+      {/* Dog Body */}
+      <rect x="-80" y="-25" width="160" height="75" rx="36" fill="#B45309" />
+      {/* Collar */}
+      <rect x="42" y="-28" width="18" height="72" rx="8" fill="#EF4444" />
+
+      {/* Dog Head & Snout */}
+      <g transform={`translate(85, -35) rotate(${Math.sin(frame * 0.25) * 6})`}>
+        <circle cx="0" cy="0" r="42" fill="#B45309" />
+        <ellipse cx="32" cy="10" rx="26" ry="18" fill="#FDE68A" />
+        <circle cx="52" cy="4" r="8" fill="#0F172A" />
+        {/* Floppy Ear */}
+        <ellipse cx="-16" cy="8" rx="14" ry="30" fill="#78350F" />
+        {/* Excited Eye & Tongue */}
+        <circle cx="14" cy="-10" r="6" fill="#0F172A" />
+        <circle cx="12" cy="-12" r="2" fill="#FFFFFF" />
+        <path d="M 28 24 Q 36 42 44 24" fill="#FB7185" />
       </g>
     </g>
   );
@@ -306,32 +215,90 @@ const DocumentaryScene: React.FC<{
   const { fps, durationInFrames } = useVideoConfig();
   const palette = SETTING_PALETTES[scene.setting] || SETTING_PALETTES.home_desk;
 
+  const progress = frame / Math.max(1, durationInFrames);
   const subPop = spring({ frame, fps, config: { damping: 15, stiffness: 140 } });
 
-  // Continuous Ken Burns camera motion
+  const coActor = scene.coActor || 'none';
+  const interaction = scene.interaction || 'solo_hero';
+
+  // === CHOREOGRAPH POSITIONS OF BOTH HERO OBJECT & CO-ACTOR ===
+  let objX = 960;
+  let objY = 560 + Math.sin(frame * 0.08) * 10;
+  let objScale = 1;
+  let objRot = Math.sin(frame * 0.06) * 4;
+
+  let actorX = -300;
+  let actorY = 620;
+  let actorFacing: 1 | -1 = 1;
+  let actorPose: 'run' | 'catch_arms_up' | 'walk_carry' | 'hand_over' | 'walk_away' = 'run';
+
+  if (interaction === 'throw_catch') {
+    // Boy/Girl runs in from right with arms up and catches the flying object!
+    objX = interpolate(progress, [0, 0.75, 1], [320, 1240, 1240]);
+    const arc = progress < 0.75 ? Math.sin((progress / 0.75) * Math.PI) * 340 : 0;
+    objY = 540 - arc;
+    objRot = progress < 0.75 ? frame * 12 : 0;
+    objScale = 0.65;
+
+    actorX = interpolate(progress, [0, 0.65, 1], [1560, 1300, 1300]);
+    actorFacing = -1;
+    actorPose = progress < 0.65 ? 'run' : 'catch_arms_up';
+  } else if (interaction === 'dog_chase') {
+    // Object bounces across the screen while the dog chases right behind it!
+    objX = interpolate(progress, [0, 1], [540, 1620]);
+    objY = 670 - Math.abs(Math.sin(frame * 0.25)) * 150;
+    objRot = frame * 10;
+    objScale = 0.62;
+
+    actorX = interpolate(progress, [0, 1], [180, 1260]);
+    actorY = 710;
+  } else if (interaction === 'hand_carry') {
+    // Boy/Girl walks happily carrying the object beside them
+    actorX = interpolate(progress, [0, 1], [420, 1380]);
+    actorFacing = 1;
+    actorPose = 'walk_carry';
+
+    objX = actorX + 95;
+    objY = 580 + Math.abs(Math.sin(frame * 0.35)) * -10;
+    objScale = 0.68;
+  } else if (interaction === 'buy_exchange') {
+    // Shopkeeper on left hands object to buyer on right
+    actorX = 640;
+    actorFacing = 1;
+    actorPose = 'hand_over';
+
+    objX = interpolate(progress, [0, 1], [760, 1140]);
+    objY = 540 - Math.sin(progress * Math.PI) * 70;
+    objScale = 0.72;
+  } else if (interaction === 'drop_abandon') {
+    // Object falls down in sadness while person walks away off-screen
+    objX = 760;
+    objY = interpolate(progress, [0, 0.35, 1], [500, 690, 690]);
+    objRot = interpolate(progress, [0, 0.35, 1], [0, -28, -28]);
+    objScale = 0.78;
+
+    actorX = interpolate(progress, [0, 1], [960, 1780]);
+    actorFacing = 1;
+    actorPose = 'walk_away';
+  }
+
+  const isSad = scene.emotion === 'sad' || scene.emotion === 'lonely';
+  const isShocked = scene.emotion === 'shocked';
+  const isBlinking = frame % 95 > 90;
+  const mouthOpen = Math.abs(Math.sin(frame * 0.35)) > 0.48;
+  const chosenIcon = OBJECT_ICON_MAP[episode.objectType] || OBJECT_ICON_MAP.ball;
+
+  // Ken Burns Camera Motion
   const camScale =
     scene.cameraMove === 'zoom_in'
-      ? interpolate(frame, [0, durationInFrames], [1.0, 1.13])
+      ? interpolate(frame, [0, durationInFrames], [1.0, 1.1])
       : scene.cameraMove === 'zoom_out'
-      ? interpolate(frame, [0, durationInFrames], [1.13, 1.0])
-      : 1.06;
-
-  const camPanX =
-    scene.cameraMove === 'pan_left'
-      ? interpolate(frame, [0, durationInFrames], [32, -32])
-      : scene.cameraMove === 'pan_right'
-      ? interpolate(frame, [0, durationInFrames], [-32, 32])
-      : 0;
+      ? interpolate(frame, [0, durationInFrames], [1.1, 1.0])
+      : 1.04;
 
   return (
     <AbsoluteFill style={{ backgroundColor: palette.top, overflow: 'hidden' }}>
-      <div
-        style={{
-          width: '100%',
-          height: '100%',
-          transform: `translateX(${camPanX}px) scale(${camScale})`,
-        }}
-      >
+      <div style={{ width: '100%', height: '100%', transform: `scale(${camScale})` }}>
         <svg width="1920" height="1080" viewBox="0 0 1920 1080">
           <defs>
             <linearGradient id={`bg-${scene.setting}`} x1="0" y1="0" x2="0" y2="1">
@@ -339,61 +306,18 @@ const DocumentaryScene: React.FC<{
               <stop offset="100%" stopColor={palette.bottom} />
             </linearGradient>
             <radialGradient id={`spot-${scene.setting}`} cx="50%" cy="45%" r="55%">
-              <stop offset="0%" stopColor={palette.light} stopOpacity="0.34" />
-              <stop offset="100%" stopColor="#000000" stopOpacity="0.48" />
+              <stop offset="0%" stopColor={palette.light} stopOpacity="0.3" />
+              <stop offset="100%" stopColor="#000000" stopOpacity="0.45" />
             </radialGradient>
           </defs>
 
           <rect width="1920" height="820" fill={`url(#bg-${scene.setting})`} />
           <rect x="0" y="780" width="1920" height="300" fill={palette.floor} />
-
-          {/* Parallax Distant Skyline / Trees / Shelves */}
-          {(scene.setting === 'school_outdoor' || scene.setting === 'rainy_street') && (
-            <g transform={`translate(${-camPanX * 0.4}, 0)`} opacity="0.35">
-              <rect x="120" y="420" width="140" height="360" fill={palette.propColor} />
-              <rect x="300" y="340" width="180" height="440" fill={palette.propColor} />
-              <rect x="1420" y="380" width="160" height="400" fill={palette.propColor} />
-              <rect x="1620" y="310" width="200" height="470" fill={palette.propColor} />
-            </g>
-          )}
-
-          {/* Home Desk Study Lamp & Warm Beam */}
-          {scene.setting === 'home_desk' && (
-            <g transform="translate(1520, 320)">
-              <polygon points="-40,80 40,80 180,460 -180,460" fill="#FDE047" opacity="0.14" />
-              <path d="M -45 80 L 45 80 L 25 25 L -25 25 Z" fill="#F59E0B" />
-              <rect x="-6" y="80" width="12" height="380" fill="#475569" />
-            </g>
-          )}
-
-          {/* Moving Factory Conveyor Belt */}
-          {scene.setting === 'factory' && (
-            <g>
-              <rect x="0" y="775" width="1920" height="30" fill="#0F172A" />
-              {Array.from({ length: 16 }).map((_, i) => {
-                const beltX = ((i * 130 + frame * 7) % 2080) - 80;
-                return <circle key={i} cx={beltX} cy="790" r="9" fill="#94A3B8" />;
-              })}
-            </g>
-          )}
-
           <rect width="1920" height="1080" fill={`url(#spot-${scene.setting})`} />
 
-          {/* Floating Golden Dust / Fireflies */}
-          {(scene.setting === 'home_desk' ||
-            scene.setting === 'store_shelf' ||
-            scene.setting === 'recycling_light') &&
-            Array.from({ length: 20 }).map((_, i) => {
-              const px = (i * 113 + Math.sin(frame * 0.03 + i) * 45) % 1920;
-              const py = 1080 - ((i * 67 + frame * 1.9) % 920);
-              return (
-                <circle key={i} cx={px} cy={py} r={3 + (i % 4)} fill="#FEF08A" opacity="0.5" />
-              );
-            })}
-
-          {/* Animated Rain Streaks */}
+          {/* Rain Streaks for Dark/Rainy Scenes */}
           {scene.setting === 'rainy_street' &&
-            Array.from({ length: 36 }).map((_, i) => {
+            Array.from({ length: 34 }).map((_, i) => {
               const rx = (i * 67 + frame * 12) % 1920;
               const ry = (i * 131 + frame * 29) % 1080;
               return (
@@ -409,15 +333,86 @@ const DocumentaryScene: React.FC<{
               );
             })}
 
-          {/* Expressive Animated Object Character */}
-          <AnimatedObjectCharacter
-            objectType={episode.objectType}
-            primaryColor={episode.primaryColor}
-            accentColor={episode.accentColor}
-            emotion={scene.emotion}
-            bodyAnim={scene.bodyAnim}
-          />
+          {/* === RENDER SECONDARY CO-ACTOR (Boy / Girl / Dog / Shopkeeper / Worker) === */}
+          {coActor === 'dog' && <DogActor x={actorX} y={actorY} />}
+          {(coActor === 'boy' ||
+            coActor === 'girl' ||
+            coActor === 'shopkeeper' ||
+            coActor === 'worker') && (
+            <HumanActor
+              role={coActor}
+              x={actorX}
+              y={actorY}
+              facing={actorFacing}
+              pose={actorPose}
+            />
+          )}
+
+          {/* Extra Second Kid on Right during Shop Purchase */}
+          {interaction === 'buy_exchange' && (
+            <HumanActor role="boy" x={1260} y={620} facing={-1} pose="catch_arms_up" />
+          )}
         </svg>
+
+        {/* === HERO OBJECT CHARACTER (Positioned dynamically inside the action) === */}
+        <div
+          style={{
+            position: 'absolute',
+            left: objX,
+            top: objY,
+            transform: `translate(-50%, -50%) rotate(${objRot}deg) scale(${objScale})`,
+            width: 380,
+            height: 380,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Icon icon={chosenIcon} width={330} height={330} />
+
+          {/* Expressive Eyes & Mouth on the Object */}
+          <svg
+            width="380"
+            height="380"
+            viewBox="-190 -190 380 380"
+            style={{ position: 'absolute', inset: 0, overflow: 'visible' }}
+          >
+            <g transform="translate(0, 5)">
+              {isBlinking ? (
+                <>
+                  <line x1="-54" y1="0" x2="-16" y2="0" stroke="#0F172A" strokeWidth="6" strokeLinecap="round" />
+                  <line x1="16" y1="0" x2="54" y2="0" stroke="#0F172A" strokeWidth="6" strokeLinecap="round" />
+                </>
+              ) : (
+                <>
+                  <circle cx="-35" cy="0" r={isShocked ? 25 : 21} fill="#FFFFFF" stroke="#0F172A" strokeWidth="3.5" />
+                  <circle cx="35" cy="0" r={isShocked ? 25 : 21} fill="#FFFFFF" stroke="#0F172A" strokeWidth="3.5" />
+                  <circle cx="-31" cy={isSad ? 5 : -2} r={isShocked ? 8 : 10.5} fill="#0F172A" />
+                  <circle cx="39" cy={isSad ? 5 : -2} r={isShocked ? 8 : 10.5} fill="#0F172A" />
+                  <circle cx="-36" cy={isSad ? 0 : -6} r="4" fill="#FFFFFF" />
+                  <circle cx="34" cy={isSad ? 0 : -6} r="4" fill="#FFFFFF" />
+                </>
+              )}
+
+              {isSad && (
+                <circle
+                  cx="-52"
+                  cy={22 + (frame % 35) * 2}
+                  r={Math.max(0, 6.5 - (frame % 35) * 0.15)}
+                  fill="#38BDF8"
+                />
+              )}
+
+              {mouthOpen ? (
+                <ellipse cx="0" cy="44" rx="15" ry="11" fill="#0F172A" />
+              ) : isSad ? (
+                <path d="M -22 52 Q 0 36 22 52" fill="none" stroke="#0F172A" strokeWidth="5" strokeLinecap="round" />
+              ) : (
+                <path d="M -24 42 Q 0 60 24 42" fill="none" stroke="#0F172A" strokeWidth="5" strokeLinecap="round" />
+              )}
+            </g>
+          </svg>
+        </div>
       </div>
 
       {/* Top-Left Chapter Pill */}
@@ -440,7 +435,7 @@ const DocumentaryScene: React.FC<{
         {episode.objectName.toUpperCase()} • {scene.chapter}
       </div>
 
-      {/* Kinetic Story Caption Card */}
+      {/* Bottom Subtitle */}
       <div
         style={{
           position: 'absolute',
@@ -456,7 +451,7 @@ const DocumentaryScene: React.FC<{
           border: '2px solid rgba(255,255,255,0.16)',
           padding: '18px 34px',
           borderRadius: 18,
-          transform: `translateY(${interpolate(subPop, [0, 1], [24, 0])}px) scale(${interpolate(subPop, [0, 1], [0.94, 1])})`,
+          transform: `translateY(${interpolate(subPop, [0, 1], [24, 0])}px)`,
           opacity: interpolate(frame, [0, 10], [0, 1], { extrapolateRight: 'clamp' }),
         }}
       >
@@ -511,7 +506,6 @@ export const MainVideo: React.FC<{ episode: EpisodeData }> = ({ episode }) => {
         ))}
       </TransitionSeries>
 
-      {/* Subtle YouTube-Style Chapter Progress Bar along Bottom Edge */}
       <div
         style={{
           position: 'absolute',
