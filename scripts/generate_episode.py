@@ -28,14 +28,27 @@ async def build_episode():
     os.makedirs("public", exist_ok=True)
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=PROMPT,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.8,
-        ),
-    )
+    models_to_try = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite"]
+    response = None
+
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=PROMPT,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.8,
+                ),
+            )
+            print(f"Script generated using {model_name}")
+            break
+        except Exception as e:
+            print(f"{model_name} failed ({e}), trying next...")
+
+    if response is None:
+        raise RuntimeError("All fallback Gemini models failed.")
+
     episode = json.loads(response.text)
 
     # Combine narration and generate neural voiceover
